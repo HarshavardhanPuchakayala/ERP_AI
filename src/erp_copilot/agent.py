@@ -2,7 +2,7 @@ import json
 import os
 import sys
 from datetime import date
-
+from guard import REFUSAL, clean_answer, is_write_request
 from dotenv import load_dotenv
 from langchain_core.messages import SystemMessage, ToolMessage
 from langchain_core.tools import StructuredTool
@@ -86,6 +86,10 @@ def _text(content) -> str:
 
 
 def ask(agent, question: str) -> dict:
+    # Layer 1: refuse obvious write requests without calling any model
+    if is_write_request(question):
+        return {"answer": REFUSAL, "tools_used": [],
+                "model": "input-guard (no model called)"}
     try:
         result = agent.invoke(
             {"messages": [("user", question)]},
@@ -101,8 +105,8 @@ def ask(agent, question: str) -> dict:
          if getattr(m, "response_metadata", None) and m.response_metadata.get("model_name")),
         MODEL_NAME,
     )
-    return {"answer": _text(messages[-1].content), "tools_used": used, "model": model}
-
+    return {"answer": clean_answer(_text(messages[-1].content)),
+            "tools_used": used, "model": model}
 TEST_QUESTIONS = [
     'Show me the details of customer "Grant Plastics Ltd."',
     "Which sales invoices were created last month?",

@@ -24,3 +24,15 @@ erp-copilot = "erp_copilot:main"
 [build-system]
 requires = ["uv_build>=0.13.0,<0.14.0"]
 build-backend = "uv_build"
+
+[dependency-groups]
+dev = [
+    "pytest>=9.2.0",
+]
+
+
+[tool.pytest.ini_options]
+pythonpath = ["src/erp_copilot"]
+testpaths = ["tests"]
+addopts = "-m 'not llm'"
+markers = ["llm: calls a real free model over the network (slow, may be flaky)"]
