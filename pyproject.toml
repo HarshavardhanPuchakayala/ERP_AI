@@ -9,6 +9,9 @@ authors = [
 requires-python = ">=3.13"
 dependencies = [
     "fastapi>=0.162.0",
+    "langchain-core>=1.7.3",
+    "langchain-openai>=1.7.3",
+    "langgraph>=1.2.19",
     "openai>=3.42.0",
     "python-dotenv>=1.2.4",
     "uvicorn>=0.54.0",
