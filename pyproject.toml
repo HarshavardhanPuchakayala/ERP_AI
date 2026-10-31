@@ -12,6 +12,7 @@ dependencies = [
     "langchain-core>=1.7.3",
     "langchain-openai>=1.7.3",
     "langgraph>=1.2.19",
+    "mcp[cli]<2",
     "openai>=3.42.0",
     "python-dotenv>=1.2.4",
     "uvicorn>=0.54.0",
