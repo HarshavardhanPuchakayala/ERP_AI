@@ -1,11 +1,13 @@
-
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI, HTTPException
+from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from agent import ask, build_agent
 
+INDEX_HTML = Path(__file__).resolve().parent / "static" / "index.html"
 state: dict = {}
 
 
@@ -27,6 +29,11 @@ class AskResponse(BaseModel):
     answer: str
     tools_used: list[str]
     model: str
+
+
+@app.get("/", include_in_schema=False)
+def home():
+    return FileResponse(INDEX_HTML)
 
 
 @app.get("/health")

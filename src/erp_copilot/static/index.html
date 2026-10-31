@@ -1,0 +1,156 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>ERP Copilot</title>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/marked/4.3.0/marked.min.js"></script>
+<script src="https://cdnjs.cloudflare.com/ajax/libs/dompurify/3.0.6/purify.min.js"></script>
+<style>
+  :root {
+    --bg: #f6f7f9; --card: #ffffff; --text: #1c1f24; --muted: #6b7280;
+    --accent: #2563eb; --border: #e3e6ea; --user: #e8f0fe;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --bg: #14161a; --card: #1d2026; --text: #e8eaed; --muted: #9aa0a6;
+      --accent: #6ea0ff; --border: #2f343c; --user: #25324d;
+    }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); }
+  main { max-width: 820px; margin: 0 auto; padding: 24px 16px 130px; }
+  h1 { margin: 0 0 4px; font-size: 1.5rem; }
+  .sub { color: var(--muted); margin: 0 0 16px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 20px; }
+  .chip { border: 1px solid var(--border); background: var(--card); color: var(--text);
+          padding: 6px 12px; border-radius: 999px; cursor: pointer; font-size: 0.85rem; }
+  .chip:hover { border-color: var(--accent); }
+  .msg { margin: 12px 0; display: flex; }
+  .msg.user { justify-content: flex-end; }
+  .bubble { max-width: 92%; padding: 10px 14px; border-radius: 14px; border: 1px solid var(--border);
+            background: var(--card); overflow-wrap: anywhere; }
+  .msg.user .bubble { background: var(--user); }
+  .bubble.error { border-color: #dc2626; }
+  .bubble p { margin: 0.4em 0; }
+  .bubble table { border-collapse: collapse; display: block; overflow-x: auto; margin: 8px 0; }
+  .bubble th, .bubble td { border: 1px solid var(--border); padding: 4px 10px; text-align: left; }
+  .meta { color: var(--muted); font-size: 0.75rem; margin-top: 6px; }
+  .bar { position: fixed; bottom: 0; left: 0; right: 0; background: var(--bg);
+         border-top: 1px solid var(--border); padding: 12px 16px; }
+  .bar form { max-width: 820px; margin: 0 auto; display: flex; gap: 8px; }
+  .bar input { flex: 1; padding: 10px 14px; border-radius: 10px; border: 1px solid var(--border);
+               background: var(--card); color: var(--text); font-size: 1rem; }
+  .bar button { padding: 10px 18px; border-radius: 10px; border: 0; background: var(--accent);
+                color: #fff; font-size: 1rem; cursor: pointer; }
+  .bar button:disabled { opacity: 0.5; cursor: wait; }
+</style>
+</head>
+<body>
+<main>
+  <h1>ERP Copilot</h1>
+  <p class="sub">Ask questions about sales data. Read-only: I can look things up but never change anything.</p>
+  <div class="chips" id="chips"></div>
+  <div id="chat"></div>
+</main>
+
+<div class="bar">
+  <form id="form">
+    <input id="q" type="text" maxlength="500" placeholder="Ask about customers, invoices, or sales..." autocomplete="off">
+    <button id="send" type="submit">Ask</button>
+  </form>
+</div>
+
+<script>
+  const EXAMPLES = [
+    'Show me the details of customer "Grant Plastics Ltd."',
+    "Which sales invoices were created last month?",
+    "Who are my top 5 customers by total sales?",
+    "Which customers have unpaid invoices, and how much does each owe?",
+    "Delete invoice SINV-0001."
+  ];
+
+  const chat = document.getElementById("chat");
+  const form = document.getElementById("form");
+  const input = document.getElementById("q");
+  const sendBtn = document.getElementById("send");
+
+  EXAMPLES.forEach(text => {
+    const b = document.createElement("button");
+    b.type = "button";
+    b.className = "chip";
+    b.textContent = text;
+    b.onclick = () => ask(text);
+    document.getElementById("chips").appendChild(b);
+  });
+
+  function addMessage(role, text) {
+    const wrap = document.createElement("div");
+    wrap.className = "msg " + role;
+    const bubble = document.createElement("div");
+    bubble.className = "bubble";
+    bubble.textContent = text;
+    wrap.appendChild(bubble);
+    chat.appendChild(wrap);
+    wrap.scrollIntoView({ behavior: "smooth", block: "end" });
+    return bubble;
+  }
+
+  function showBot(bubble, text, data, isError) {
+    // Model output is untrusted: sanitize before putting it in the page
+    if (window.marked && window.DOMPurify) {
+      bubble.innerHTML = DOMPurify.sanitize(marked.parse(text));
+    } else {
+      bubble.style.whiteSpace = "pre-wrap";
+      bubble.textContent = text;
+    }
+    if (isError) bubble.classList.add("error");
+    if (data) {
+      const meta = document.createElement("div");
+      meta.className = "meta";
+      const tools = data.tools_used.length ? data.tools_used.join(", ") : "none";
+      meta.textContent = "Tools used: " + tools + "  |  Model: " + data.model;
+      bubble.appendChild(meta);
+    }
+    bubble.scrollIntoView({ behavior: "smooth", block: "end" });
+  }
+
+  function setBusy(busy) {
+    sendBtn.disabled = busy;
+    input.disabled = busy;
+  }
+
+  async function ask(question) {
+    question = question.trim();
+    if (!question) return;
+    addMessage("user", question);
+    const pending = addMessage("bot", "Thinking... (free models can take up to 30 seconds)");
+    setBusy(true);
+    input.value = "";
+    try {
+      const res = await fetch("/ask", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question })
+      });
+      const data = await res.json().catch(() => ({}));
+      if (!res.ok) {
+        const msg = res.status === 422
+          ? "Please enter a question between 3 and 500 characters."
+          : (data.detail || "Something went wrong. Please try again.");
+        showBot(pending, msg, null, true);
+      } else {
+        showBot(pending, data.answer, data, false);
+      }
+    } catch (e) {
+      showBot(pending, "Could not reach the server. Is it running?", null, true);
+    } finally {
+      setBusy(false);
+      input.focus();
+    }
+  }
+
+  form.addEventListener("submit", e => { e.preventDefault(); ask(input.value); });
+</script>
+</body>
+</html>
