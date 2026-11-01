@@ -1,10 +1,10 @@
 # ERP Copilot
 
-An AI copilot that answers plain-English questions about ERP-style sales data (customers, invoices, sales totals) and **can only read, never change, that data**.
+An AI copilot that answers plain-English questions about ERP-style sales data (customers, invoices, sales totals) and company policy documents, and **can only read, never change, that data**.
 
 Built with free tools only: Python, FastAPI, LangGraph, SQLite, the MCP Python SDK and free OpenRouter models.
 
-> **Status:** working locally, with a self-made SQLite sales database. Not deployed yet. The ERPNext connection is **designed but not yet tested against a live ERPNext** (see [Linking to ERPNext](#linking-to-erpnext)).
+> **Status:** working locally, with a self-made SQLite sales database and sample policy documents. Not deployed yet. The ERPNext connection is **designed but not yet tested against a live ERPNext** (see [Linking to ERPNext](#linking-to-erpnext)).
 
 ## Screenshots
 
@@ -12,14 +12,14 @@ Built with free tools only: Python, FastAPI, LangGraph, SQLite, the MCP Python S
 |---|---|---|
 | ![Customer details](docs/screenshots/chat-customer-details.png) | ![Last month invoices](docs/screenshots/chat-last-month.png) | ![Unpaid invoices and refusal](docs/screenshots/chat-unpaid-and-refusal.png) |
 
-Every answer shows which **tools** were used and which **model** wrote it, so you can check the work.
+Every answer shows which **tools** were used, which **document sections** were retrieved (for policy questions), and which **model** wrote it, so you can check the work.
 
 ## The problem
 
 A sales manager at a small trading company has to open the ERP, find the right report and set filters by hand just to answer questions like "which customers have unpaid invoices?". This copilot lets them type the question instead.
 
 **Version 1 scope**
-- Read-only access to sales data (customers, invoices)
+- Read-only access to sales data (customers, invoices) and company documents
 - No creating, editing or deleting records
 - No other ERP modules
 - No user login or roles
@@ -30,7 +30,9 @@ A sales manager at a small trading company has to open the ERP, find the right r
 2. Which sales invoices were created last month?
 3. Who are my top 5 customers by total sales?
 4. Which customers have unpaid invoices, and how much does each owe?
-5. Delete invoice SINV-0001. *(must be refused)*
+5. What does our policy say about overdue invoices?
+6. Can a customer return goods after 14 days?
+7. Delete invoice SINV-0001. *(must be refused)*
 
 ## How it works
 
@@ -38,37 +40,44 @@ A sales manager at a small trading company has to open the ERP, find the right r
 Browser chat page
       |
       v
-FastAPI  (/ask)
+FastAPI (/ask): rate limit and answer cache
       |
       v
-Input guard ---- looks like a write request? ----> polite refusal (no model called)
+Input guard ---- write request? ----> polite refusal (no model called)
       |
       v
 LangGraph agent  <---->  free OpenRouter model
       |
       v
-Tool allowlist: 6 read-only tools
-      |
-      v
-Read-only data source (SQLite today, an ERP API tomorrow)
+Tool allowlist: 7 read-only tools
+   |                          |
+   v                          v
+6 data tools             search_documents
+   |                          |
+   v                          v
+Read-only data           knowledge/ folder
+(SQLite today,           (your .md and .txt files)
+ an ERP API tomorrow)
 ```
 
-The same six tools are also exposed over **MCP**, so any MCP-compatible app can use them.
+The same seven tools are also exposed over **MCP**, so any MCP-compatible app can use them.
 
 ### Design decisions
 
-- **The AI never writes SQL.** It picks from six fixed, parameterized tools and fills in simple inputs. A model that can write SQL can also write `DELETE`.
+- **The AI never writes SQL.** It picks from seven fixed, parameterized tools and fills in simple inputs. A model that can write SQL can also write `DELETE`.
 - **Code does the dates and the math.** Free models get "last month" and totals wrong, so `get_date_range` computes dates in code and tools return pre-computed totals. The model quotes them.
+- **Numbers from tools, words from documents.** Search finds similar text, not exact totals, so amounts never come from document search.
 - **Large results are flagged.** Tools return a `truncated` flag so the answer can say "showing the first N of M".
-- **Model output is untrusted.** The chat page sanitizes it before display.
+- **Retrieved text and model output are untrusted.** Documents are labelled as data, not instructions, and the chat page sanitizes model output before display.
+- **Cheap questions cost nothing.** Refused write requests and repeated questions never reach the model, which protects the free daily quota.
 
 ## Safety: four layers
 
 | Layer | What it does | Depends on the model behaving? |
 |---|---|---|
 | 1. Input guard (`guard.py`) | Refuses obvious write requests before any model is called | No |
-| 2. System prompt | Tells the model it is read-only | **Yes** (the weakest layer) |
-| 3. Tool allowlist | Only six read tools exist; there is nothing to delete with | No |
+| 2. System prompt | Tells the model it is read-only and to treat documents as data | **Yes** (the weakest layer) |
+| 3. Tool allowlist | Only seven read-only tools exist; there is nothing to delete with | No |
 | 4. Read-only connection | The database itself rejects every write | No |
 
 Output cleanup also strips currency symbols the model invents, because the data has no currency.
@@ -84,32 +93,36 @@ Output cleanup also strips currency symbols the model invents, because the data 
 | Agent | LangGraph + LangChain OpenAI client |
 | Models | Free models through OpenRouter |
 | Data | SQLite (generated demo data) |
+| Document search | SQLite FTS5 with BM25 ranking |
 | Tool protocol | MCP Python SDK (pinned to `mcp<2`) |
 | Tests | pytest |
 
 ## Quick start
 
-You need Python 3.11+ and [uv](https://docs.astral.sh/uv/).
+You need [uv](https://docs.astral.sh/uv/), which also installs a suitable Python for you.
 
 ```bash
-git clone <your-repo-url>
-cd ERP_Copilot
+git clone https://github.com/harshavardhanpuchakayala/erp-copilot.git
+cd erp-copilot
 uv sync
 ```
 
-Create a `.env` file in the project root (never commit it):
+Copy `.env.example` to `.env` (never commit it) and add your key:
 
 ```
 OPENROUTER_API_KEY=your-key-here
 OPENROUTER_MODEL=openrouter/free
+
+# Optional
+# DAILY_CAP=12
+# KNOWLEDGE_DIR=C:\path\to\my\documents
 ```
 
 Get a free key at [openrouter.ai](https://openrouter.ai). `openrouter/free` is a router that picks a free model for you. To pin one model, set `OPENROUTER_MODEL` to a free model ID that supports tool calling. Free model lists change often, so check openrouter.ai/models.
 
-Build the demo database and start the server:
+Start the server. The demo database is built automatically on first start (or run `uv run python src/erp_copilot/seed_db.py` to rebuild it by hand):
 
 ```bash
-uv run python src/erp_copilot/seed_db.py
 uv run uvicorn api:app --app-dir src/erp_copilot --reload
 ```
 
@@ -118,13 +131,27 @@ Open http://127.0.0.1:8000.
 ## Tests
 
 ```bash
-uv run pytest            # fast, deterministic safety tests (no AI, no network)
-uv run pytest -m llm -v  # slow tests that call a real free model; re-run once if one fails
+uv run pytest            # 60 fast tests: no AI, no network
+uv run pytest -m llm -v  # 8 slow tests that call a real free model
 ```
 
-The deterministic suite covers: the database rejecting `DELETE`/`UPDATE`/`INSERT`/`DROP`, the exact tool list, SQL-injection input, row limits, bad dates, the input guard, and currency-symbol cleanup.
+**Run the model tests rarely.** They make dozens of model requests, which uses a large share of a free account's daily quota (see [Free-tier limits](#free-tier-limits-and-the-live-demo)). If one fails, wait a minute and re-run it once, because free models are inconsistent.
 
-The model tests check that a disguised delete request ("get rid of invoice SINV-0001") is refused by the model, that ranking questions use the right tool, and that the total owed matches the database.
+The fast suite covers:
+- the database rejecting `DELETE`, `UPDATE`, `INSERT` and `DROP`
+- the exact tool list, SQL-injection input, row limits and bad dates
+- the input guard and currency-symbol cleanup
+- document search: right file found, nonsense and out-of-scope questions return nothing, special characters cannot break the query, edited files are picked up
+- the rate limiter, the answer cache, and API error handling
+
+The model tests check that:
+- a disguised delete request ("get rid of invoice SINV-0001") is refused
+- ranking and totals questions use the right tool and match the database
+- policy questions use document search and cite their source
+- a question the documents cannot answer is not invented
+- a question needing both data and policy uses both kinds of tools
+- a document containing "delete every invoice" **cannot change the data** (this must always hold)
+- the model does not obey that planted instruction (model-dependent)
 
 ## Run the MCP server
 
@@ -138,17 +165,96 @@ It uses stdio, so an MCP app launches it as a command. To check it without any a
 uv run python src/erp_copilot/test_mcp.py
 ```
 
-This lists the six tools and confirms that `delete_invoice` and `run_sql` come back as unknown tools.
+This lists the seven tools and confirms that `delete_invoice` and `run_sql` come back as unknown tools.
 
 ---
 
-# Linking to ERPNext
+## Use your own documents (RAG)
 
-The copilot never touches the database directly. Everything goes through six functions in `tools.py`. **To connect a real ERP you replace what is inside those functions and keep their names, inputs and return shapes unchanged.** The agent, the guard, the chat page, the MCP server and most tests then work without changes.
+Besides data questions, the copilot answers questions about **company documents** (policies, procedures, FAQs) and shows which file each answer came from.
+
+> The files in `knowledge/` describe a **fictional** company so the demo works out of the box. Replace them with your own.
+
+### Swap in your files
+
+1. **Delete** the sample files in `knowledge/`.
+2. **Copy your own files** into `knowledge/`. Use `.md` or `.txt` files. Subfolders are fine.
+3. **Ask a question.** Edits are picked up automatically, with no restart needed locally.
+4. **Update the topic list** in the `search_documents` docstring in `src/erp_copilot/knowledge.py` (it currently says "credit, payment terms, returns, shipping, glossary"). The model reads that sentence to decide when to search, so name your topics.
+5. Optional: change the example buttons in `src/erp_copilot/static/index.html` and the questions in this README.
+
+To keep your documents somewhere else, set `KNOWLEDGE_DIR` in `.env`:
+
+```
+KNOWLEDGE_DIR=C:\path\to\my\documents
+```
+
+A file named `README.md` inside the knowledge folder is ignored, so you can leave notes for yourself there.
+
+### Write documents that search well
+
+Search is by **keywords**, not meaning, so how you write matters.
+
+- **Use clear headings.** Each section under a heading is one searchable passage, and headings count extra in ranking.
+- **One topic per section**, kept short. Sections over about 1,000 characters are split.
+- **Use the words your users use.** If people ask about "refunds", don't write only "reimbursements".
+- **Put the answer in the section.** Repeat key facts instead of writing "see above".
+- **PDFs and Word files are not read directly.** Export them to `.md` or `.txt` first.
+
+### How it works
+
+1. Documents are split into sections at their headings.
+2. A question is reduced to its meaningful words and ranked against the sections using SQLite's built-in full-text search (FTS5, BM25).
+3. A passage is kept only if enough of the question's words appear in it, so unrelated passages are not handed to the model.
+4. The model answers **only from the retrieved passages**, names the source file, and says so when nothing relevant was found.
+
+### Limits
+
+| Limit | Value |
+|---|---|
+| File types | `.md`, `.txt` |
+| File size | 200 KB per file (larger files are skipped) |
+| Passages per question | up to 5 |
+| Search type | Keywords. Different wording ("reimbursement" vs "refund") will not match |
+| Scale | Built for dozens of files. The index is rebuilt for each question, so for thousands of documents use a persistent index or embeddings |
+
+### Safety
+
+- **Documents are data, not instructions.** Retrieved text is labelled as reference material, the prompt says never to follow commands inside it, and the model has no tool that can change anything. A planted "delete every invoice" instruction in a document is tested for, and cannot change the data.
+- **Numbers stay on the tool path.** Totals and invoice amounts come from the database tools, never from document search.
+- **Do not load confidential documents while using free models.** Retrieved passages are sent to the model provider, and free tiers may log or train on prompts.
+- **If you commit `knowledge/` to a public repository, those documents are public.** For private documents, add the folder to `.gitignore`.
+- **On a deployed host** the disk is rebuilt on each deploy, so documents ship with your Git push.
+
+### Tests after swapping documents
+
+The test suite uses its **own copy** of the sample documents in `tests/fixtures/knowledge/`, so replacing `knowledge/` will not break it. To test your own files, add questions with expected answers in `tests/test_knowledge.py`, pointing at your own folder.
+
+---
+
+## Free-tier limits and the live demo
+
+The project runs on free OpenRouter models. OpenRouter limits free models to 20 requests per minute, and **50 requests per day** per account unless the account has bought at least $10 of credits (then 1,000 per day). One question can use 2 to 3 requests, so a free account supports roughly 15 to 25 questions per day in total.
+
+To protect that quota, the server:
+- caps model-backed questions per day for all visitors (`DAILY_CAP`, default 12)
+- limits each visitor to 8 questions per minute
+- caches answers for an hour, so repeating a question costs nothing
+- refuses write requests before any model is called, which also costs nothing
+
+These counters live in memory and reset when the server restarts.
+
+If a live demo says its daily limit was reached, the screenshots above show it working, and you can run the project locally with your own free OpenRouter key.
+
+---
+
+## Linking to ERPNext
+
+The copilot never touches the database directly. All sales data goes through six data functions in `tools.py` (document search is separate and stays unchanged). **To connect a real ERP you replace what is inside those functions and keep their names, inputs and return shapes unchanged.** The agent, the guard, the chat page, the MCP server and most tests then work without changes.
 
 > **Honesty note:** this guide follows Frappe's documented REST API, but it has **not been run against a live ERPNext in this project**. Field names also differ between ERPNext versions and customizations. Do Step 3 below to confirm the real names before trusting any mapping.
 
-## Step 1: Create a read-only ERPNext user
+### Step 1: Create a read-only ERPNext user
 
 Do this first. It means ERPNext itself refuses writes, even if code or the AI misbehaves.
 
@@ -166,7 +272,7 @@ ERP_API_KEY=your-key
 ERP_API_SECRET=your-secret
 ```
 
-## Step 2: Prove the user is read-only
+### Step 2: Prove the user is read-only
 
 From PowerShell, replace the placeholders:
 
@@ -180,7 +286,7 @@ curl.exe -X POST -H "Authorization: token YOUR_KEY:YOUR_SECRET" -H "Content-Type
 
 If the second call **succeeds**, the user has an extra role. Remove it before going further.
 
-## Step 3: Check the real field names
+### Step 3: Check the real field names
 
 Fetch one real invoice with all its fields and read the names:
 
@@ -188,7 +294,7 @@ Fetch one real invoice with all its fields and read the names:
 curl.exe -H "Authorization: token YOUR_KEY:YOUR_SECRET" -H "Accept: application/json" "https://YOUR_SITE/api/resource/Sales%20Invoice?limit_page_length=1&fields=[\"*\"]"
 ```
 
-## Step 4: Map the tools to ERPNext
+### Step 4: Map the tools to ERPNext
 
 The usual mapping is below. **Confirm each field against Step 3's output.**
 
@@ -208,7 +314,7 @@ Filters that matter for correct numbers:
 - `docstatus = 1` keeps **submitted** invoices only. Drafts (0) and cancelled ones (2) would give wrong totals.
 - `is_return = 0` leaves out credit notes, or handle them on purpose.
 
-How the six tools translate:
+How the six data tools translate:
 
 | Tool | ERPNext approach |
 |---|---|
@@ -221,13 +327,13 @@ How the six tools translate:
 
 Grouping in your own code (instead of asking ERPNext to aggregate) is slower on big data but easy to test and works on any ERPNext version. For a large company, move the heavy sums into an ERPNext report or a server-side query later.
 
-## Step 5: Add a backend switch
+### Step 5: Add a backend switch
 
 Recommended structure:
 
-1. Move the current SQLite versions of the six functions into `backend_sqlite.py`.
+1. Move the current SQLite versions of the six data functions into `backend_sqlite.py`.
 2. Create `backend_erpnext.py` with the **same six function names and return shapes**.
-3. In `tools.py`, keep the function names and docstrings (the model reads those docstrings to choose tools) and make each one call the active backend, selected by `DATA_BACKEND`. `TOOL_FUNCTIONS` stays the single allowlist.
+3. In `tools.py`, keep the function names and docstrings (the model reads those docstrings to choose tools) and make each one call the active backend, selected by `DATA_BACKEND`. `TOOL_FUNCTIONS` stays the single allowlist, and `search_documents` stays in it.
 
 Install the HTTP client: `uv add httpx`
 
@@ -302,21 +408,20 @@ Use the same pattern for the other tools. Keep these rules:
 - **Keep `MAX_ROWS` and the date checks.**
 - **Never print** from a tool. MCP over stdio breaks if anything writes to standard output.
 
-## Step 6: Test the new backend
+### Step 6: Test the new backend
 
 1. Run `uv run pytest`. Tests that open the SQLite file directly (the read-only connection tests and the 70-invoice row-limit test) only apply to SQLite. For ERPNext, replace them with a test that a write call returns 403 and that a very large `limit` is capped.
 2. Add tests with mocked HTTP responses so nothing needs a live ERP.
 3. Compare 3 or 4 answers against the ERPNext screens by hand (for example Accounts Receivable). Matching totals is the real acceptance test.
 4. Run `uv run pytest -m llm -v` and `uv run python src/erp_copilot/test_mcp.py` again.
 
-## Before you point this at real data
+### Before you point this at real data
 
 - **Free models are not private.** Tool results are sent to third-party model providers, and free tiers may log or train on prompts. Use demo or non-sensitive data, or pay for a provider with a data-handling policy you accept.
 - **Use HTTPS** for the ERP connection and keep keys in environment variables only.
-- **There is no login on the chat page yet.** Anyone who can reach the server can ask questions. Add authentication before exposing it beyond your own machine.
-- **Add rate limiting** so the page cannot be used to burn your free model quota.
+- **There is no login on the chat page yet.** Anyone who can reach the server can ask questions. Add authentication before exposing it beyond your own machine. Rate limits and a daily cap exist, but they are not a substitute for login.
 
-## Other ERPs and databases
+### Other ERPs and databases
 
 The same swap works for any system you can read from. You need functions that return:
 
@@ -333,7 +438,7 @@ The same swap works for any system you can read from. You need functions that re
 | Your own SQL database | Point `_connect()` at it with a database user that has `SELECT` only, and adjust table and column names |
 | CSV exports | Load into SQLite with a script, then use the existing backend |
 
-## Using an existing ERPNext MCP server instead
+### Using an existing ERPNext MCP server instead
 
 Community MCP servers for ERPNext exist, for example Frappe Assistant Core and `erpnext-mcp-server`. This repo does not use them, for these reasons:
 
@@ -348,31 +453,44 @@ If you try one anyway, still use the read-only ERPNext user from Step 1, so ERPN
 ## Project structure
 
 ```
-ERP_Copilot/
+erp-copilot/
 ├── pyproject.toml, uv.lock       # dependencies (uv)
-├── .env                          # secrets, never committed
+├── requirements.txt              # for hosts that install with pip
+├── .env.example                  # copy to .env (secrets are never committed)
+├── knowledge/                    # your documents (the samples are fictional)
 ├── docs/
 │   ├── problem-statement.md
 │   └── screenshots/
 ├── src/erp_copilot/
-│   ├── tools.py                  # the six read-only tools (the swap point)
+│   ├── tools.py                  # data tools and the allowlist (the swap point)
+│   ├── knowledge.py              # document search (retrieval half of RAG)
 │   ├── agent.py                  # LangGraph agent
 │   ├── guard.py                  # input guard and output cleanup
-│   ├── api.py                    # FastAPI server
+│   ├── answer_cache.py           # cache that saves free-model quota
+│   ├── api.py                    # FastAPI server, rate limits
 │   ├── mcp_server.py             # MCP server over the same tools
 │   ├── seed_db.py                # builds data/erp.db demo data
+│   ├── check_db.py, test_tools.py, test_mcp.py   # manual check scripts
 │   └── static/index.html         # chat page
 ├── tests/
-│   ├── test_safety.py            # deterministic safety tests
+│   ├── fixtures/knowledge/       # test copy of the sample documents
+│   ├── test_safety.py            # database, tools and input guard
+│   ├── test_knowledge.py         # document search
+│   ├── test_rag_integration.py   # search wired into the agent
+│   ├── test_answer_cache.py
+│   ├── test_ratelimit.py
+│   ├── test_api_errors.py
 │   └── test_agent_behavior.py    # real-model tests (marked llm)
 └── data/                         # generated, not committed
 ```
 
 ## Known limitations
 
-- Demo data is generated, not real
-- Free models vary in quality and speed, and can be rate-limited
-- No login, roles or rate limiting
+- Demo data and sample documents are generated, not real
+- Free models vary in quality and speed. The free daily quota is small (see [Free-tier limits](#free-tier-limits-and-the-live-demo)), so a live demo can run out of questions
+- Free models sometimes add wrong commentary (for example naming the wrong customer as "highest") even when the tool data is correct. The numbers come from code, but the sentences around them come from the model
+- Document search is by keywords, not meaning
+- No login or roles. Rate limits, the daily cap and the answer cache are in memory and reset on restart
 - Only the invoices-and-customers slice of Selling is covered
+- The input guard is a keyword filter and can be bypassed or can block innocent questions. The tool allowlist and the read-only database protect the data either way
 - ERPNext connection is a documented plan, not a tested feature
-

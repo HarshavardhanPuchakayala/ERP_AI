@@ -2,7 +2,7 @@
 import sqlite3
 from datetime import date, timedelta
 from pathlib import Path
-
+from knowledge import search_documents
 DB_PATH = Path(__file__).resolve().parents[2] / "data" / "erp.db"
 MAX_ROWS = 50
 
@@ -207,4 +207,5 @@ TOOL_FUNCTIONS = {
     "top_customers": top_customers,
     "customers_who_owe": customers_who_owe,
     "get_invoice": get_invoice,
+    "search_documents": search_documents,
 }

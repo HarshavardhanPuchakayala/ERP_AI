@@ -8,7 +8,7 @@ from guard import clean_answer, is_write_request
 
 EXPECTED_TOOLS = {
     "get_date_range", "find_customer", "list_invoices",
-    "top_customers", "customers_who_owe", "get_invoice",
+    "top_customers", "customers_who_owe", "get_invoice", "search_documents",
 }
 
 

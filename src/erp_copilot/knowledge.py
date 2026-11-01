@@ -97,14 +97,30 @@ def _load_chunks(directory: str, signature: tuple) -> tuple:
 _WORD = re.compile(r"[A-Za-z0-9]+")
 
 
-def _fts_query(text: str) -> str:
-    """Turn free text into a safe FTS5 query: quoted words joined with OR."""
+def _query_words(text: str) -> list[str]:
+    """The meaningful words of a question: no stopwords, no duplicates."""
     words, seen = [], set()
     for w in _WORD.findall(text.lower()):
         if len(w) > 2 and w not in STOPWORDS and w not in seen:
             seen.add(w)
             words.append(w)
-    return " OR ".join(f'"{w}"' for w in words[:MAX_QUERY_WORDS])
+    return words[:MAX_QUERY_WORDS]
+
+
+def _fts_query(words: list[str]) -> str:
+    """Safe FTS5 query: every word quoted, joined with OR."""
+    return " OR ".join(f'"{w}"' for w in words)
+
+
+def _enough_overlap(words: list[str], chunk: dict) -> bool:
+    """Keep a passage only if at least half of the question's words appear in it
+    (but never require more than two).
+
+    Without this, one common word (like "days") makes unrelated passages match,
+    and a model may then build a confident answer from irrelevant text."""
+    tokens = _WORD.findall((chunk["section"] + " " + chunk["text"]).lower())
+    hits = sum(1 for w in words if any(t.startswith(w[:5]) for t in tokens))
+    return hits >= min(2, max(1, (len(words) + 1) // 2))
 
 
 def search_documents(query: str, limit: int = 3) -> dict:
@@ -115,10 +131,10 @@ def search_documents(query: str, limit: int = 3) -> dict:
     limit = max(1, min(int(limit), MAX_RESULTS))
     directory = knowledge_dir()
     chunks = _load_chunks(str(directory), _signature(directory))
-    match = _fts_query(query)
+    words = _query_words(query)
 
     results: list[dict] = []
-    if match and chunks:
+    if words and chunks:
         conn = sqlite3.connect(":memory:")
         try:
             conn.execute(
@@ -130,11 +146,12 @@ def search_documents(query: str, limit: int = 3) -> dict:
             )
             rows = conn.execute(
                 "SELECT rowid FROM c WHERE c MATCH ? ORDER BY bm25(c, 3.0, 1.0) LIMIT ?",
-                (match, limit),
+                (_fts_query(words), limit * 4),  # fetch extra, then filter
             ).fetchall()
         finally:
             conn.close()
-        results = [dict(chunks[r[0] - 1]) for r in rows]
+        candidates = [chunks[r[0] - 1] for r in rows]
+        results = [dict(c) for c in candidates if _enough_overlap(words, c)][:limit]
 
     return {
         "query": query,

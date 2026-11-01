@@ -67,6 +67,8 @@
     "Which sales invoices were created last month?",
     "Who are my top 5 customers by total sales?",
     "Which customers have unpaid invoices, and how much does each owe?",
+    "What does our policy say about overdue invoices?",
+    "Can a customer return goods after 14 days?",
     "Delete invoice SINV-0001."
   ];
 
@@ -109,7 +111,8 @@
       const meta = document.createElement("div");
       meta.className = "meta";
       const tools = data.tools_used.length ? data.tools_used.join(", ") : "none";
-      meta.textContent = "Tools used: " + tools + "  |  Model: " + data.model;
+      const src = data.sources && data.sources.length ? "  |  Sources: " + data.sources.join("; ") : "";
+      meta.textContent = "Tools used: " + tools + src + "  |  Model: " + data.model;
       bubble.appendChild(meta);
     }
     bubble.scrollIntoView({ behavior: "smooth", block: "end" });
