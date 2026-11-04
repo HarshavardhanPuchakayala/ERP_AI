@@ -15,8 +15,12 @@ from tools import TOOL_FUNCTIONS
 
 load_dotenv()
 
+
+
+
+
 MODEL_NAME = os.getenv("OPENROUTER_MODEL", "openrouter/free")
-MAX_STEPS = 6  # maximum tool-use rounds per question
+MAX_STEPS = 6  
 
 SYSTEM_PROMPT = """You are ERP Copilot, a read-only assistant for a small trading company's sales data and policy documents.
 Today's date is {today}.
